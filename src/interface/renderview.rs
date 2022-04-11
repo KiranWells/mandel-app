@@ -6,7 +6,7 @@ use druid::{
     Rect,
 };
 
-use crate::image_generator::{ImageGenerator, GeneratorParameters};
+use crate::image_generator::{GeneratorParameters, ImageGenerator};
 
 pub struct RenderView {
     image: ImageGenerator,
@@ -57,36 +57,25 @@ impl RenderView {
 }
 
 impl<GP> Widget<GP> for RenderView
-where GP: GeneratorParameters + Data + PartialEq {
-    fn event(
-        &mut self,
-        ctx: &mut EventCtx,
-        event: &Event,
-        data: &mut GP,
-        _env: &Env,
-    ) {
+where
+    GP: GeneratorParameters + Data + PartialEq,
+{
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut GP, _env: &Env) {
         match event {
             Event::AnimFrame(x) => {
                 if self.old_progress == Some(100.0) {
                     if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-                        // unsafe { image.finish_compute(handles) };
                         handle.join().unwrap();
                     }
                     self.old_progress = None;
                 }
-                // println! {"Anim frame: should_render: {}, old_progress: {:?}", self.should_render, self.old_progress};
                 if self.should_render && self.old_progress == None {
                     self.render_new::<GP>(&data.clone().into());
                 }
-                // if self.should_recolor && self.old_progress == None {
-                //     self.render_color(&data.clone().into());
-                // }
                 if x % 2 == 0 {
-                    // println! {"Got 1/2 anim frame"};
                     let progress = self.image.get_progress();
                     if Some(progress) != self.old_progress {
                         self.old_progress = Some(progress);
-                        // println! {"Progress: {progress}"};
                         ctx.request_paint()
                     }
                 }
@@ -96,13 +85,7 @@ where GP: GeneratorParameters + Data + PartialEq {
         }
     }
 
-    fn lifecycle(
-        &mut self,
-        ctx: &mut LifeCycleCtx,
-        event: &LifeCycle,
-        _data: &GP,
-        _env: &Env,
-    ) {
+    fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, _data: &GP, _env: &Env) {
         match event {
             LifeCycle::WidgetAdded => {
                 ctx.request_anim_frame();
@@ -112,25 +95,13 @@ where GP: GeneratorParameters + Data + PartialEq {
         }
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx,
-        old_data: &GP,
-        data: &GP,
-        _env: &Env,
-    ) {
+    fn update(&mut self, _ctx: &mut UpdateCtx, old_data: &GP, data: &GP, _env: &Env) {
         if data != old_data {
             self.should_render = true;
         }
     }
 
-    fn layout(
-        &mut self,
-        ctx: &mut LayoutCtx,
-        bc: &BoxConstraints,
-        _data: &GP,
-        _env: &Env,
-    ) -> Size {
+    fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints, _data: &GP, _env: &Env) -> Size {
         let max_size = bc.max();
         let window_size = ctx.window().get_size();
         let new_size = Size::new(
@@ -141,16 +112,6 @@ where GP: GeneratorParameters + Data + PartialEq {
             self.resize(&new_size);
         }
         new_size
-        // if self.constrain_to_output {
-        //     let aspect = data.output_height as f64 / data.output_width as f64;
-        //     if expanded_size.height / aspect < max_size.width {
-        //         Size::new(expanded_size.height / aspect, expanded_size.height)
-        //     } else {
-        //         Size::new(expanded_size.width, expanded_size.width * aspect)
-        //     }
-        // } else {
-        //     expanded_size
-        // }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, _data: &GP, _env: &Env) {

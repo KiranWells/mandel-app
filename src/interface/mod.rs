@@ -4,16 +4,19 @@ use druid::{
         Axis, Button, Checkbox, Flex, Label, LineBreaking, MainAxisAlignment, Scroll, Slider, Tabs,
         TabsTransition, TextBox, ValueTextBox,
     },
-    Color, Data, Env, Event, EventCtx, FontDescriptor, FontFamily, FontWeight, Lens, Point,
-    TextAlignment, Widget, WidgetExt, WidgetPod,
+    Color, Env, EventCtx, FontDescriptor, FontFamily, FontWeight, Lens, TextAlignment, Widget,
+    WidgetExt,
 };
 
+mod renderview;
+mod view_controllers;
+
 use crate::{
-    image_generator::{GeneratorParameters, ImageGenerator},
-    mandel::MandelParameters,
-    renderview::RenderView,
-    AppData, FractalSettings,
+    backends::MandelParameters, image_generator::ImageGenerator, AppData, FractalSettings,
 };
+
+pub use renderview::RenderView;
+use view_controllers::ViewDragController;
 
 macro parameters_to_interface {
     ($struct:ty [ $( $option:tt ),+ ] ) => {
@@ -138,182 +141,6 @@ fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
     });
 }
 
-struct ViewDragController<GP> {
-    old_mouse_pos: Option<Point>,
-    child: WidgetPod<GP, RenderView>,
-}
-
-impl<GP> ViewDragController<GP>
-where
-    GP: GeneratorParameters + Data + PartialEq,
-{
-    pub fn new() -> Self {
-        ViewDragController {
-            old_mouse_pos: None,
-            child: WidgetPod::new(RenderView::new(100, 100)),
-        }
-    }
-}
-
-impl Widget<AppData> for ViewDragController<MandelParameters> {
-    fn event(&mut self, ctx: &mut EventCtx, event: &druid::Event, data: &mut AppData, env: &Env) {
-        if let FractalSettings::Mandel(data) = &mut data.settings {
-            match event {
-                Event::MouseDown(mouse_event) => {
-                    self.old_mouse_pos = Some(mouse_event.window_pos);
-                }
-                Event::MouseMove(mouse_event) => {
-                    if let Some(old_pos) = self.old_mouse_pos {
-                        let difference = mouse_event.window_pos - old_pos;
-                        const SENSITIVITY: f64 = 0.0009;
-                        data.offset_x -= difference.x * f64::powf(2.0, -data.zoom) * SENSITIVITY;
-                        data.offset_y -= difference.y * f64::powf(2.0, -data.zoom) * SENSITIVITY;
-                        self.old_mouse_pos = Some(mouse_event.window_pos);
-                        self.child.widget_mut().should_render = true;
-                    }
-                }
-                Event::MouseUp(_event) => {
-                    self.old_mouse_pos = None;
-                }
-                Event::Wheel(event) => {
-                    const SENSITIVITY: f64 = 0.003;
-                    data.zoom -= event.wheel_delta.y * SENSITIVITY;
-                    data.max_iter = (f64::powf(2.0, data.zoom / 10.0) * 1000.0) as usize;
-                    self.child.widget_mut().should_render = true;
-                }
-                _ => {
-                    self.child.event(ctx, event, data, env);
-                }
-            }
-        }
-    }
-
-    fn lifecycle(
-        &mut self,
-        ctx: &mut druid::LifeCycleCtx,
-        event: &druid::LifeCycle,
-        data: &AppData,
-        env: &Env,
-    ) {
-        let _ = data
-            .clone()
-            .try_into()
-            .map(|data| self.child.lifecycle(ctx, event, &data, env));
-    }
-
-    fn update(
-        &mut self,
-        ctx: &mut druid::UpdateCtx,
-        old_data: &AppData,
-        data: &AppData,
-        env: &Env,
-    ) {
-        if data.preview_downscaling != old_data.preview_downscaling {
-            self.child.widget_mut().scaling = if data.preview_downscaling { 0.6 } else { 1.0 };
-            self.child.widget_mut().should_resize = true;
-            ctx.request_layout();
-        }
-        if data.output_height != old_data.output_height
-            || data.output_width != old_data.output_width
-        {
-            self.child.widget_mut().should_resize = true;
-            ctx.request_layout();
-        }
-        let _ = data
-            .clone()
-            .try_into()
-            .map(|data| self.child.update(ctx, &data, env));
-    }
-
-    fn paint(&mut self, ctx: &mut druid::PaintCtx, data: &AppData, env: &Env) {
-        let _ = data
-            .clone()
-            .try_into()
-            .map(|data| self.child.paint(ctx, &data, env));
-    }
-
-    fn layout(
-        &mut self,
-        ctx: &mut druid::LayoutCtx,
-        bc: &druid::BoxConstraints,
-        data: &AppData,
-        env: &Env,
-    ) -> druid::Size {
-        data.clone()
-            .try_into()
-            .map(|data| self.child.layout(ctx, bc, &data, env))
-            .unwrap_or(bc.min())
-    }
-}
-
-// fn save_to_clipboard(ctx: &mut EventCtx, data: &mut AppData, env: &Env) {
-//     if let Ok(ctx) = ClipboardProvider::new() {
-//         ctx.set_contents(data.to_string()).unwrap();
-//     } else {
-//         println!{"Failed to set clipboard!"};
-//     }
-// }
-
-// fn get_from_clipboard(ctx: &mut EventCtx, data: &mut AppData, env: &Env) {
-//     if let Ok(ctx) = ClipboardProvider::new() {
-//         data = ctx.get_contents().unwrap().parse();
-//     } else {
-//         println!{"Failed to set clipboard!"};
-//     }
-// }
-
-// #[derive(Data, Clone)]
-// struct SidewaysPolicy {
-
-// }
-
-// impl TabsPolicy for SidewaysPolicy {
-//     fn close_tab(&self, key: Self::Key, data: &mut Self::Input) {}
-
-//     fn build(build: Self::Build) -> Self {
-//         panic!("TabsPolicy::Build called on a policy that does not support incremental building")
-//     }
-
-//     fn default_make_label(info: druid::widget::TabInfo<Self::Input>) -> Label<Self::Input> {
-//         Label::new(info.name).transform().with_text_color(druid::theme::FOREGROUND_LIGHT)
-//     }
-
-//     type Key;
-
-//     type Input;
-
-//     type BodyWidget;
-
-//     type LabelWidget;
-
-//     type Build;
-
-//     fn tabs_changed(&self, old_data: &Self::Input, data: &Self::Input) -> bool {
-//         todo!()
-//     }
-
-//     fn tabs(&self, data: &Self::Input) -> Vec<Self::Key> {
-//         todo!()
-//     }
-
-//     fn tab_info(&self, key: Self::Key, data: &Self::Input) -> druid::widget::TabInfo<Self::Input> {
-//         todo!()
-//     }
-
-//     fn tab_body(&self, key: Self::Key, data: &Self::Input) -> Self::BodyWidget {
-//         todo!()
-//     }
-
-//     fn tab_label(
-//         &self,
-//         key: Self::Key,
-//         info: druid::widget::TabInfo<Self::Input>,
-//         data: &Self::Input,
-//     ) -> Self::LabelWidget {
-//         todo!()
-//     }
-// }
-
 #[derive(Clone, Copy)]
 enum AppView {
     Generation,
@@ -394,7 +221,7 @@ fn create_generation_tab() -> impl Widget<AppData> {
                     [
                         (preview_downscaling: [ x ] "Half-scale preview")
                     ]
-                })
+                }),
         )
         .main_axis_alignment(MainAxisAlignment::Start)
 }

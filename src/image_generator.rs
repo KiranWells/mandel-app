@@ -36,8 +36,7 @@ pub struct ImageGenerator {
     progress: Arc<AtomicI32>,
 }
 
-impl ImageGenerator
-{
+impl ImageGenerator {
     pub fn new(width: usize, height: usize) -> Self {
         let width = width + (LANES - width % LANES);
         ImageGenerator {
@@ -107,7 +106,7 @@ impl ImageGenerator
                 .store((j * 1000 / self.height) as i32, Ordering::Relaxed);
             // actual calculation
             for i in (0..self.width).step_by(LANES) {
-                let intermediate = settings.calc_pixel_row(self.width, self.height, (i,j));
+                let intermediate = settings.calc_pixel_row(self.width, self.height, (i, j));
                 let pixel = settings.shade_pixel_row(intermediate);
                 self.write_pixel(i + j * self.width, pixel);
             }
@@ -125,7 +124,7 @@ impl ImageGenerator
     }
 
     unsafe fn write_pixel(&mut self, x: usize, pixel: [Pixel; LANES]) {
-        let mut data = UnsafeCell::new(self.pixels.as_ptr() as *mut Pixel);// as *mut [RgbaPixel; 4]);
+        let mut data = UnsafeCell::new(self.pixels.as_ptr() as *mut Pixel); // as *mut [RgbaPixel; 4]);
         ptr::write(data.get_mut().offset(x as isize), pixel[0]);
         ptr::write(data.get_mut().offset((x + 1) as isize), pixel[1]);
         ptr::write(data.get_mut().offset((x + 2) as isize), pixel[2]);

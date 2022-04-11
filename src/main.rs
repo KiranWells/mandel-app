@@ -2,51 +2,21 @@
 #![feature(try_blocks)]
 #![feature(decl_macro)]
 
+mod backends;
 mod image_generator;
 mod interface;
-mod mandel;
-mod renderview;
+mod types;
 
-use std::sync::Arc;
+use druid::{AppLauncher, PlatformError, WindowDesc};
 
-use druid::{AppLauncher, Data, Lens, PlatformError, WindowDesc};
-
-use mandel::{MandelParameters};
-
-#[derive(Clone, Data)]
-pub enum FractalSettings {
-    Mandel(MandelParameters),
-    _Julia(MandelParameters),
-}
-
-#[derive(Clone, Data, Lens)]
-pub struct AppData {
-    pub preview_downscaling: bool,
-    pub settings: FractalSettings,
-    pub output_width: usize,
-    pub output_height: usize,
-    pub filename: String,
-    pub log_text: String,
-    pub rendering_image: Option<Arc<MandelParameters>>,
-}
-
-impl TryFrom<AppData> for MandelParameters {
-    type Error = ();
-    fn try_from(val: AppData) -> Result<Self, Self::Error> {
-        if let FractalSettings::Mandel(settings) = val.settings {
-            Ok(settings.clone())
-        } else {
-            Err(())
-        }
-    }
-}
+use backends::MandelParameters;
+use types::{FractalSettings, AppData};
 
 fn main() -> Result<(), PlatformError> {
     let main_window = WindowDesc::new(interface::build_ui);
     let data = AppData {
         settings: FractalSettings::Mandel(MandelParameters {
             max_iter: 250,
-            // scale: 4.0,
             zoom: -2.0,
             offset_x: -0.5,
             offset_y: 0.0,

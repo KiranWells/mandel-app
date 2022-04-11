@@ -11,8 +11,7 @@ use std::simd::{f64x4, Simd, StdFloat};
 
 use druid::{Data, Lens};
 
-use crate::image_generator::{GeneratorParameters, Pixel, LANES, BYTES_PER_PIXEL};
-
+use crate::image_generator::{GeneratorParameters, Pixel, BYTES_PER_PIXEL, LANES};
 
 #[derive(Clone, PartialEq, Data, Lens)]
 pub struct MandelParameters {
@@ -36,7 +35,7 @@ const MM_ZERO: f64x4 = Simd::splat(0.0);
 
 impl GeneratorParameters for MandelParameters {
     type Intermediate = [f64; 4];
-    /// calculates the color for a pixel `[i,j]` of the image
+    /// calculates the color for LANES number of pixels from `[i,j]` to `[i,j+LANES]` of the image
     fn calc_pixel_row(
         &self,
         width: usize,
@@ -137,7 +136,7 @@ impl GeneratorParameters for MandelParameters {
 
     fn shade_pixel_row(&self, parameters: [Self::Intermediate; LANES]) -> [Pixel; LANES] {
         let scale = f64::powf(2.0, -self.zoom);
-        let mut row: [Pixel; LANES] = [[0;BYTES_PER_PIXEL];LANES];
+        let mut row: [Pixel; LANES] = [[0; BYTES_PER_PIXEL]; LANES];
         for v in 0..parameters.len() {
             let step = parameters[0][v];
             let r = parameters[1][v];
@@ -180,10 +179,7 @@ impl GeneratorParameters for MandelParameters {
         row
     }
 
-    fn needs_recompute(
-        settings: &Self,
-        old_settings: &Self,
-    ) -> bool {
+    fn needs_recompute(settings: &Self, old_settings: &Self) -> bool {
         return settings.max_iter != old_settings.max_iter
             || settings.zoom != old_settings.zoom
             || settings.offset_y != old_settings.offset_y

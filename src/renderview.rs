@@ -6,30 +6,30 @@ use druid::{
     Rect,
 };
 
-use crate::image_generator::ImageGenerator;
+use crate::image_generator::{ImageGenerator, GeneratorParameters};
 
-pub struct RenderView<IG: ImageGenerator + 'static> {
-    image: IG,
+pub struct RenderView {
+    image: ImageGenerator,
     handle: Option<JoinHandle<()>>,
     old_progress: Option<f64>,
-    scaling: f64,
+    pub scaling: f64,
     pub should_render: bool,
-    pub should_recolor: bool,
+    pub should_resize: bool,
 }
 
-impl<IG: ImageGenerator> RenderView<IG> {
+impl RenderView {
     pub fn new(width: usize, height: usize) -> Self {
         RenderView {
-            image: IG::new(width, height),
+            image: ImageGenerator::new(width, height),
             handle: None,
             old_progress: None,
             should_render: true,
-            should_recolor: true,
+            should_resize: false,
             scaling: 0.5,
         }
     }
 
-    fn render_new(&mut self, settings: &IG::ImageDescriptor) {
+    fn render_new<GP: GeneratorParameters>(&mut self, settings: &GP) {
         if let Some(handle) = std::mem::replace(&mut self.handle, None) {
             handle.join().unwrap();
         }
@@ -40,41 +40,29 @@ impl<IG: ImageGenerator> RenderView<IG> {
         self.should_render = false;
     }
 
-    fn _render_color(&mut self, settings: &IG::ImageDescriptor) {
-        if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-            handle.join().unwrap();
-        }
-        self.old_progress = Some(0.0);
-        let sent = settings.clone();
-        let mut sent_image = self.image.clone();
-        self.handle = Some(std::thread::spawn(move || sent_image.do_composite(sent, 8)));
-        self.should_recolor = false;
-    }
-
     fn resize(&mut self, new_size: &Size) {
-        // if let Some(image) = &mut self.image {
         if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-            // unsafe { image.finish_compute(handles) };
             handle.join().unwrap();
             self.old_progress = None;
         }
-        // }
         let &Size { width, height } = new_size;
         println! {"Size: {:?}", new_size};
-        self.image = IG::new(
+        self.image = ImageGenerator::new(
             (width * self.scaling) as usize,
             (height * self.scaling) as usize,
         );
+        self.should_resize = false;
         self.should_render = true;
     }
 }
 
-impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
+impl<GP> Widget<GP> for RenderView
+where GP: GeneratorParameters + Data + PartialEq {
     fn event(
         &mut self,
         ctx: &mut EventCtx,
         event: &Event,
-        data: &mut IG::ImageDescriptor,
+        data: &mut GP,
         _env: &Env,
     ) {
         match event {
@@ -88,7 +76,7 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
                 }
                 // println! {"Anim frame: should_render: {}, old_progress: {:?}", self.should_render, self.old_progress};
                 if self.should_render && self.old_progress == None {
-                    self.render_new(&data.clone().into());
+                    self.render_new::<GP>(&data.clone().into());
                 }
                 // if self.should_recolor && self.old_progress == None {
                 //     self.render_color(&data.clone().into());
@@ -112,7 +100,7 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
         &mut self,
         ctx: &mut LifeCycleCtx,
         event: &LifeCycle,
-        _data: &IG::ImageDescriptor,
+        _data: &GP,
         _env: &Env,
     ) {
         match event {
@@ -127,28 +115,12 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
     fn update(
         &mut self,
         _ctx: &mut UpdateCtx,
-        old_data: &IG::ImageDescriptor,
-        data: &IG::ImageDescriptor,
+        old_data: &GP,
+        data: &GP,
         _env: &Env,
     ) {
-        // if data.preview_downscaling != old_data.preview_downscaling {
-        //     self.scaling = if data.preview_downscaling { 0.6 } else { 1.0 };
-        //     // self.resize(&ctx.size())
-        //     ctx.request_layout()
-        // }
-        // if data.output_height != old_data.output_height
-        //     || data.output_width != old_data.output_width
-        // {
-        //     ctx.request_layout()
-        // }
-        // if data != old_data {
-        //     self.should_render = true;
-        // }
         if data != old_data {
-            // if IG::needs_recompute(data, old_data) {
-            // }
             self.should_render = true;
-            self.should_recolor = true;
         }
     }
 
@@ -156,16 +128,19 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
         &mut self,
         ctx: &mut LayoutCtx,
         bc: &BoxConstraints,
-        _data: &IG::ImageDescriptor,
+        _data: &GP,
         _env: &Env,
     ) -> Size {
         let max_size = bc.max();
         let window_size = ctx.window().get_size();
-        // let expanded_size =
-        Size::new(
+        let new_size = Size::new(
             max_size.width.min(window_size.width),
             max_size.height.min(window_size.height),
-        )
+        );
+        if self.should_resize {
+            self.resize(&new_size);
+        }
+        new_size
         // if self.constrain_to_output {
         //     let aspect = data.output_height as f64 / data.output_width as f64;
         //     if expanded_size.height / aspect < max_size.width {
@@ -178,7 +153,7 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
         // }
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx, _data: &IG::ImageDescriptor, _env: &Env) {
+    fn paint(&mut self, ctx: &mut PaintCtx, _data: &GP, _env: &Env) {
         let drawable_image = ctx
             .make_image(
                 self.image.width(),
@@ -187,7 +162,6 @@ impl<IG: ImageGenerator> Widget<IG::ImageDescriptor> for RenderView<IG> {
                 ImageFormat::Rgb,
             )
             .unwrap();
-        // println! {"Got a paint with an image"};
         let size = ctx.size();
         ctx.draw_image(
             &drawable_image,

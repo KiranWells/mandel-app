@@ -1,27 +1,82 @@
-// use bitmap::generate_bitmap_image;
 use druid::{
     text::format::ParseFormatter,
     widget::{
-        Axis, Button, Checkbox, Controller, Flex, Label, LineBreaking, MainAxisAlignment, Scroll,
-        Slider, Tabs, TabsTransition, TextBox, ValueTextBox,
+        Axis, Button, Checkbox, Flex, Label, LineBreaking, MainAxisAlignment, Scroll, Slider, Tabs,
+        TabsTransition, TextBox, ValueTextBox,
     },
     Color, Data, Env, Event, EventCtx, FontDescriptor, FontFamily, FontWeight, Lens, Point,
-    TextAlignment, Widget, WidgetExt,
+    TextAlignment, Widget, WidgetExt, WidgetPod,
 };
-// use image::
-// use clipboard::{ClipboardProvider};
 
 use crate::{
-    image_generator::ImageGenerator,
-    mandel::{ImageDescriptor, MandelGenerator},
+    image_generator::{GeneratorParameters, ImageGenerator},
+    mandel::MandelParameters,
     renderview::RenderView,
     AppData, FractalSettings,
 };
 
+macro parameters_to_interface {
+    ($struct:ty [ $( $option:tt ),+ ] ) => {
+        Flex::column()
+        $(
+            .with_child(
+                parameters_to_interface!{_inner; $struct, $option}
+            )
+        )+
+    },
+    (_inner; $struct:ty, ($member:ident: [$min:literal to $max:literal] $name:literal)) => {
+            Flex::column()
+            .with_child(
+                parameters_to_interface!{_inner_label; $name}
+            )
+            .with_child(
+                ValueTextBox::new(TextBox::new(), ParseFormatter::new()),
+            )
+            .with_child(
+                Slider::new()
+                    .with_range($min, $max)
+                    .expand_width()
+                    .padding((0.0, 5.0)),
+            )
+            .expand_width()
+            .lens(<$struct>::$member)
+    },
+    (_inner; $struct:ty, ($member:ident: [  ] $name:literal $($attribute:ident),*)) => {
+            Flex::column()
+            .with_child(
+                parameters_to_interface!{_inner_label; $name}
+            )
+            .with_child(
+                ValueTextBox::new(TextBox::new(), ParseFormatter::new())
+                    .lens(<$struct>::$member)
+                    $(
+                        .$attribute()
+                    )?
+                    .expand_width(),
+            )
+            .expand_width()
+    },
+    (_inner; $struct:ty, ($member:ident: [ x ] $name:literal)) => {
+            Flex::column()
+            .with_child(Checkbox::new($name).lens(<$struct>::$member))
+            .padding((0.0, 10.0, 0.0, 0.0))
+    },
+    (_inner_label; $name:literal) => {
+        Label::new($name)
+        .with_font(
+            FontDescriptor::new(FontFamily::SYSTEM_UI)
+                .with_weight(FontWeight::BOLD)
+                .with_size(15.0),
+        )
+        .padding((0.0, 5.0, 0.0, 10.0))
+        .expand_width()
+    },
+}
+
 struct AppDataToMandel {}
 
-impl Lens<AppData, ImageDescriptor> for AppDataToMandel {
-    fn with<V, F: FnOnce(&ImageDescriptor) -> V>(&self, data: &AppData, f: F) -> V {
+impl Lens<AppData, MandelParameters> for AppDataToMandel {
+    fn with<V, F: FnOnce(&MandelParameters) -> V>(&self, data: &AppData, f: F) -> V {
         if let FractalSettings::Mandel(settings) = &data.settings {
             f(settings)
         } else {
@@ -29,7 +84,7 @@ impl Lens<AppData, ImageDescriptor> for AppDataToMandel {
         }
     }
 
-    fn with_mut<V, F: FnOnce(&mut ImageDescriptor) -> V>(&self, data: &mut AppData, f: F) -> V {
+    fn with_mut<V, F: FnOnce(&mut MandelParameters) -> V>(&self, data: &mut AppData, f: F) -> V {
         if let FractalSettings::Mandel(settings) = &mut data.settings {
             f(settings)
         } else {
@@ -40,12 +95,7 @@ impl Lens<AppData, ImageDescriptor> for AppDataToMandel {
 
 pub fn build_ui() -> impl Widget<AppData> {
     Flex::row()
-        .with_flex_child(
-            RenderView::new(100, 100)
-                .controller(ViewDragController::default())
-                .lens(AppDataToMandel {}),
-            0.75,
-        )
+        .with_flex_child(ViewDragController::new(), 0.75)
         .with_flex_child(
             Flex::column()
                 .with_child(
@@ -60,7 +110,7 @@ pub fn build_ui() -> impl Widget<AppData> {
                         .with_tab("Generation", select_view(AppView::Generation))
                         .with_tab("Coloring", select_view(AppView::Coloring))
                         .with_tab("Rendering", select_view(AppView::Rendering))
-                        .with_transition(TabsTransition::Instant), // .lens(AppData::tab_name)
+                        .with_transition(TabsTransition::Instant),
                     1.0,
                 )
                 .with_child(Label::new(
@@ -71,12 +121,12 @@ pub fn build_ui() -> impl Widget<AppData> {
 }
 
 fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
-    let mut render_image = MandelGenerator::new(data.output_width, data.output_height);
+    let mut render_image = ImageGenerator::new(data.output_width, data.output_height);
     let passable = data.clone();
     data.log_text = String::from("Render Started...");
     let _ = std::thread::spawn(move || {
         let filename = passable.filename.clone();
-        render_image.do_compute(passable.try_into().unwrap(), num_cpus::get());
+        render_image.do_compute::<MandelParameters>(passable.try_into().unwrap(), num_cpus::get());
         image::save_buffer(
             filename.as_str(),
             render_image.image_data(),
@@ -88,72 +138,111 @@ fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
     });
 }
 
-#[derive(Default)]
-struct ViewDragController {
+struct ViewDragController<GP> {
     old_mouse_pos: Option<Point>,
+    child: WidgetPod<GP, RenderView>,
 }
 
-impl Controller<<MandelGenerator as ImageGenerator>::ImageDescriptor, RenderView<MandelGenerator>>
-    for ViewDragController
+impl<GP> ViewDragController<GP>
+where
+    GP: GeneratorParameters + Data + PartialEq,
 {
-    fn event(
-        &mut self,
-        child: &mut RenderView<MandelGenerator>,
-        ctx: &mut EventCtx,
-        event: &druid::Event,
-        data: &mut <MandelGenerator as ImageGenerator>::ImageDescriptor,
-        env: &Env,
-    ) {
-        match event {
-            Event::MouseDown(mouse_event) => {
-                self.old_mouse_pos = Some(mouse_event.window_pos);
-            }
-            Event::MouseMove(mouse_event) => {
-                if let Some(old_pos) = self.old_mouse_pos {
-                    let difference = mouse_event.window_pos - old_pos;
-                    const SENSITIVITY: f64 = 0.0009;
-                    data.offset_x -= difference.x * f64::powf(2.0, -data.zoom) * SENSITIVITY;
-                    data.offset_y -= difference.y * f64::powf(2.0, -data.zoom) * SENSITIVITY;
+    pub fn new() -> Self {
+        ViewDragController {
+            old_mouse_pos: None,
+            child: WidgetPod::new(RenderView::new(100, 100)),
+        }
+    }
+}
+
+impl Widget<AppData> for ViewDragController<MandelParameters> {
+    fn event(&mut self, ctx: &mut EventCtx, event: &druid::Event, data: &mut AppData, env: &Env) {
+        if let FractalSettings::Mandel(data) = &mut data.settings {
+            match event {
+                Event::MouseDown(mouse_event) => {
                     self.old_mouse_pos = Some(mouse_event.window_pos);
-                    child.should_render = true;
                 }
-            }
-            Event::MouseUp(_event) => {
-                self.old_mouse_pos = None;
-            }
-            Event::Wheel(event) => {
-                const SENSITIVITY: f64 = 0.003;
-                data.zoom -= event.wheel_delta.y * SENSITIVITY;
-                // data.scale = f64::powf(2.0, -data.zoom);
-                data.max_iter = (f64::powf(2.0, data.zoom / 10.0) * 1000.0) as usize;
-                child.should_render = true;
-            }
-            _ => {
-                child.event(ctx, event, data, env);
+                Event::MouseMove(mouse_event) => {
+                    if let Some(old_pos) = self.old_mouse_pos {
+                        let difference = mouse_event.window_pos - old_pos;
+                        const SENSITIVITY: f64 = 0.0009;
+                        data.offset_x -= difference.x * f64::powf(2.0, -data.zoom) * SENSITIVITY;
+                        data.offset_y -= difference.y * f64::powf(2.0, -data.zoom) * SENSITIVITY;
+                        self.old_mouse_pos = Some(mouse_event.window_pos);
+                        self.child.widget_mut().should_render = true;
+                    }
+                }
+                Event::MouseUp(_event) => {
+                    self.old_mouse_pos = None;
+                }
+                Event::Wheel(event) => {
+                    const SENSITIVITY: f64 = 0.003;
+                    data.zoom -= event.wheel_delta.y * SENSITIVITY;
+                    data.max_iter = (f64::powf(2.0, data.zoom / 10.0) * 1000.0) as usize;
+                    self.child.widget_mut().should_render = true;
+                }
+                _ => {
+                    self.child.event(ctx, event, data, env);
+                }
             }
         }
     }
 
     fn lifecycle(
         &mut self,
-        child: &mut RenderView<MandelGenerator>,
         ctx: &mut druid::LifeCycleCtx,
         event: &druid::LifeCycle,
-        data: &<MandelGenerator as ImageGenerator>::ImageDescriptor,
+        data: &AppData,
         env: &Env,
     ) {
-        child.lifecycle(ctx, event, data, env)
+        let _ = data
+            .clone()
+            .try_into()
+            .map(|data| self.child.lifecycle(ctx, event, &data, env));
     }
 
     fn update(
         &mut self,
-        child: &mut RenderView<MandelGenerator>,
         ctx: &mut druid::UpdateCtx,
-        old_data: &<MandelGenerator as ImageGenerator>::ImageDescriptor,
-        data: &<MandelGenerator as ImageGenerator>::ImageDescriptor,
+        old_data: &AppData,
+        data: &AppData,
         env: &Env,
     ) {
-        child.update(ctx, old_data, data, env)
+        if data.preview_downscaling != old_data.preview_downscaling {
+            self.child.widget_mut().scaling = if data.preview_downscaling { 0.6 } else { 1.0 };
+            self.child.widget_mut().should_resize = true;
+            ctx.request_layout();
+        }
+        if data.output_height != old_data.output_height
+            || data.output_width != old_data.output_width
+        {
+            self.child.widget_mut().should_resize = true;
+            ctx.request_layout();
+        }
+        let _ = data
+            .clone()
+            .try_into()
+            .map(|data| self.child.update(ctx, &data, env));
+    }
+
+    fn paint(&mut self, ctx: &mut druid::PaintCtx, data: &AppData, env: &Env) {
+        let _ = data
+            .clone()
+            .try_into()
+            .map(|data| self.child.paint(ctx, &data, env));
+    }
+
+    fn layout(
+        &mut self,
+        ctx: &mut druid::LayoutCtx,
+        bc: &druid::BoxConstraints,
+        data: &AppData,
+        env: &Env,
+    ) -> druid::Size {
+        data.clone()
+            .try_into()
+            .map(|data| self.child.layout(ctx, bc, &data, env))
+            .unwrap_or(bc.min())
     }
 }
 
@@ -243,7 +332,6 @@ fn select_view(view: AppView) -> impl Widget<AppData> {
         .padding(10.0),
     )
     .vertical()
-    // .expand()
 }
 
 fn create_rendering_tab() -> impl Widget<AppData> {
@@ -258,39 +346,27 @@ fn create_rendering_tab() -> impl Widget<AppData> {
                 .expand_width()
                 .padding(3.0),
         )
-        .with_child(create_option_label("Output Image Width"))
-        .with_child(
-            ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                .lens(AppData::output_width)
-                .align_left()
-                .expand_width(),
-        )
-        .with_child(create_option_label("Output Image Height"))
-        .with_child(
-            ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                .lens(AppData::output_height)
-                .align_left()
-                .expand_width(),
-        )
-        .with_child(create_option_label("Output Image Filename"))
-        .with_child(
-            ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                .lens(AppData::filename)
-                .expand_width(),
-        )
+        .with_child(parameters_to_interface! {
+            AppData
+            [
+                (output_width: [ ] "Output Image Width" align_left),
+                (output_height: [ ] "Output Image Height" align_left),
+                (filename: [ ] "Output Image Filename" align_left)
+            ]
+        })
         .with_child(
             Button::new("Render")
                 .on_click(render_full)
                 .padding((0.0, 7.0)),
         )
-        // .with_child(RenderView::<MandelGenerator>::new(100, 100).lens(AppDataToMandel {}))
+        // .with_child(RenderView::<MandelParameters>::new(100, 100).lens(AppDataToMandel {}))
         .main_axis_alignment(MainAxisAlignment::Start)
 }
 
 fn create_generation_tab() -> impl Widget<AppData> {
     Flex::column()
         .with_child(
-            Flex::<ImageDescriptor>::column()
+            Flex::column()
                 .with_child(
                     Label::new("Generation")
                         .with_font(FontDescriptor::new(FontFamily::SYSTEM_UI).with_size(20.0)),
@@ -301,37 +377,25 @@ fn create_generation_tab() -> impl Widget<AppData> {
                         .expand_width()
                         .padding(3.0),
                 )
-                .with_child(create_option_label("Maximum Iterations"))
                 .with_child(
-                    ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                        .lens(ImageDescriptor::max_iter)
-                        .align_left()
-                        .expand_width(),
+                    parameters_to_interface! {
+                        MandelParameters
+                        [
+                            (max_iter: [ ] "Maximum Iterations" align_left),
+                            (zoom: [-10.0 to 50.0] "Zoom"),
+                            (offset_x: [ ] "Real Offset (x)" center),
+                            (offset_y: [ ] "Real Offset (y)" center)
+                        ]
+                    }
+                    .lens(AppDataToMandel {}),
                 )
-                .with_child(create_option_label("Zoom"))
-                .with_child(create_input(-10.0, 50.0).lens(ImageDescriptor::zoom))
-                .with_child(create_option_label("Offset"))
-                .with_child(
-                    Flex::row().with_child(Label::new("x:")).with_flex_child(
-                        ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                            .lens(ImageDescriptor::offset_x)
-                            .expand_width(),
-                        1.0,
-                    ),
-                )
-                .with_spacer(5.0)
-                .with_child(
-                    Flex::row().with_child(Label::new("y:")).with_flex_child(
-                        ValueTextBox::new(TextBox::new(), ParseFormatter::new())
-                            .lens(ImageDescriptor::offset_y)
-                            .expand_width(),
-                        1.0,
-                    ),
-                )
-                .lens(AppDataToMandel {}),
+                .with_child(parameters_to_interface! {
+                    AppData
+                    [
+                        (preview_downscaling: [ x ] "Half-scale preview")
+                    ]
+                })
         )
-        .with_child(create_option_label("Preview Scaling"))
-        .with_child(Checkbox::new("Half scale preview").lens(AppData::preview_downscaling))
         .main_axis_alignment(MainAxisAlignment::Start)
 }
 
@@ -347,46 +411,18 @@ fn create_coloring_tab() -> impl Widget<AppData> {
                 .expand_width()
                 .padding(3.0),
         )
-        .with_child(create_option_label("Saturation"))
-        .with_child(create_input(0.0, 2.0).lens(ImageDescriptor::saturation))
-        .with_child(create_option_label("Color Frequency"))
-        .with_child(create_input(0.01, 10.0).lens(ImageDescriptor::color_frequency))
-        .with_child(create_option_label("Color Offset"))
-        .with_child(create_input(0.0, 1.0).lens(ImageDescriptor::color_offset))
-        .with_child(create_option_label("Glow Spread"))
-        .with_child(create_input(-10.0, 10.0).lens(ImageDescriptor::glow_spread))
-        .with_child(create_option_label("Glow Strength"))
-        .with_child(create_input(0.01, 10.0).lens(ImageDescriptor::glow_strength))
-        .with_child(create_option_label("Brightness"))
-        .with_child(create_input(0.1, 10.0).lens(ImageDescriptor::brightness))
-        .with_child(create_option_label("Internal Brightness"))
-        .with_child(create_input(0.1, 100.0).lens(ImageDescriptor::internal_brightness))
+        .with_child(parameters_to_interface! {
+            MandelParameters
+            [
+                (saturation: [0.0 to 2.0] "Saturation"),
+                (color_frequency: [0.01 to 10.0] "Color Frequency"),
+                (color_offset: [0.0 to 1.0] "Color Offset"),
+                (glow_spread: [-10.0 to 10.0] "Glow Spread"),
+                (glow_strength: [0.01 to 10.0] "Glow Strength"),
+                (brightness: [0.01 to 10.0] "Brightness"),
+                (internal_brightness: [0.01 to 100.0] "Internal Brightness")
+            ]
+        })
         .main_axis_alignment(MainAxisAlignment::Start)
         .lens(AppDataToMandel {})
-}
-
-fn create_option_label<T: Data>(text: &str) -> impl Widget<T> {
-    Label::new(text)
-        .with_font(
-            FontDescriptor::new(FontFamily::SYSTEM_UI)
-                .with_weight(FontWeight::BOLD)
-                .with_size(15.0),
-        )
-        .padding((0.0, 5.0, 0.0, 10.0))
-        .expand_width()
-}
-
-fn create_input(min: f64, max: f64) -> impl Widget<f64> {
-    Flex::column()
-        .with_child(
-            ValueTextBox::new(TextBox::new(), ParseFormatter::new()),
-            // 0.3,
-        )
-        .with_child(
-            Slider::new()
-                .with_range(min, max)
-                .expand_width()
-                .padding((0.0, 5.0)),
-        )
-        .expand_width()
 }

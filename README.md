@@ -4,7 +4,7 @@ This is a simple Rust application made with Druid which provides the tools to cr
 
 ## Compiling
 
-Currently, the backend requires the target feature `avx2` to be available.
+Currently, the backend works best when the target feature `avx2` is available, as this enables SIMD operations.
 
 ```sh
 # debug [non-release] builds are significantly slower, useful for development only

@@ -8,5 +8,7 @@
     "imag",
     "powf",
     "renderview"
-  ]
+  ],
+  "editor.formatOnSave": true,
+  "editor.tabSize": 4
 }

@@ -8,12 +8,14 @@ use crate::image_generator::{GeneratorParameters, Pixel, BYTES_PER_PIXEL, LANES}
 use super::hsl2rgb;
 
 #[derive(Clone, PartialEq, Data, Lens)]
-pub struct MandelParameters {
+pub struct JuliaParameters {
     // image parameters
     pub max_iter: usize,
     pub zoom: f64,
     pub offset_x: f64,
     pub offset_y: f64,
+    pub constant_real: f64,
+    pub constant_imag: f64,
     // colors
     pub saturation: f64,
     pub color_frequency: f64,
@@ -27,7 +29,7 @@ pub struct MandelParameters {
 const MM_ONES: f64x4 = Simd::splat(1.0);
 const MM_ZERO: f64x4 = Simd::splat(0.0);
 
-impl GeneratorParameters for MandelParameters {
+impl GeneratorParameters for JuliaParameters {
     type Intermediate = [f64; 4];
     /// calculates the color for LANES number of pixels from `[i,j]` to `[i,j+LANES]` of the image
     fn calc_pixel_row(
@@ -40,29 +42,29 @@ impl GeneratorParameters for MandelParameters {
         let scale = f64::powf(2.0, -self.zoom);
 
         // c: complex number
-        let c_real = Simd::from_array([
+        let c_real = Simd::splat(self.constant_real);
+        let c_imag = Simd::splat(self.constant_imag);
+
+        // z: complex number
+        let mut z_real = Simd::from_array([
             ((i + 0) as f64 / width as f64 - 0.5) * scale + self.offset_x,
             ((i + 1) as f64 / width as f64 - 0.5) * scale + self.offset_x,
             ((i + 2) as f64 / width as f64 - 0.5) * scale + self.offset_x,
             ((i + 3) as f64 / width as f64 - 0.5) * scale + self.offset_x,
         ]);
 
-        let c_imag = Simd::splat(
+        let mut z_imag = Simd::splat(
             (j as f64 / height as f64 - 0.5) * scale * (height as f64 / width as f64)
                 + self.offset_y,
         );
-
-        // z: complex number
-        let mut z_real = MM_ZERO;
-        let mut z_imag = MM_ZERO;
 
         // z': complex running derivative
         let mut z_prime_r = MM_ONES;
         let mut z_prime_i = MM_ONES;
 
         // z^2: temporary value for optimized computation
-        let mut real_2 = MM_ZERO;
-        let mut imag_2 = MM_ZERO;
+        let mut real_2 = z_real * z_real;
+        let mut imag_2 = z_imag * z_imag;
 
         // value accumulators for coloring
         let mut step_acc = MM_ZERO;
@@ -77,8 +79,8 @@ impl GeneratorParameters for MandelParameters {
             //   r2 := z.r × z.r
             //   i2 := z.i × z.i
             //
-            // z' is calculated according to the standard formula (z' = 2*z*z' + 1):
-            //   z'.r = 2 * (z.r * z'.r - z.i * z'.i) + 1
+            // z' is calculated according to the standard formula (z' = 2*z*z'):
+            //   z'.r = 2 * (z.r * z'.r - z.i * z'.i)
             //   z'.i = 2 * (z.i * z'.r + z.r * z'.i)
 
             let z_imag_tmp = (z_real + z_real) * z_imag + c_imag;
@@ -88,7 +90,7 @@ impl GeneratorParameters for MandelParameters {
             let ac_bd = z_real * z_prime_r - z_imag * z_prime_i;
             let bc_da = z_imag * z_prime_r + z_real * z_prime_i;
 
-            let z_prime_r_tmp = ac_bd + ac_bd + MM_ONES;
+            let z_prime_r_tmp = ac_bd + ac_bd;
             let z_prime_i_tmp = bc_da + bc_da;
 
             let radius_2 = real_2 + imag_2;
@@ -177,17 +179,21 @@ impl GeneratorParameters for MandelParameters {
         return settings.max_iter != old_settings.max_iter
             || settings.zoom != old_settings.zoom
             || settings.offset_y != old_settings.offset_y
-            || settings.offset_x != old_settings.offset_x;
+            || settings.offset_x != old_settings.offset_x
+            || settings.constant_real != old_settings.constant_real
+            || settings.constant_imag != old_settings.constant_imag;
     }
 }
 
-impl Default for MandelParameters {
+impl Default for JuliaParameters {
     fn default() -> Self {
         Self {
             max_iter: 250,
             zoom: -2.0,
-            offset_x: -0.5,
+            offset_x: 0.0,
             offset_y: 0.0,
+            constant_real: 0.15,
+            constant_imag: -0.6,
             saturation: 1.0,
             color_frequency: 1.0,
             color_offset: 0.0,

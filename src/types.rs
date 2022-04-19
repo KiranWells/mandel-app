@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use druid::{Data, Lens};
 
-use crate::backends::MandelParameters;
+use crate::backends::{JuliaParameters, MandelParameters};
 
-#[derive(Clone, Data)]
+#[derive(Clone, Data, PartialEq)]
 pub enum FractalSettings {
     Mandel(MandelParameters),
-    _Julia(MandelParameters),
+    Julia(JuliaParameters),
 }
 
 #[derive(Clone, Data, Lens)]
@@ -25,6 +25,16 @@ impl TryFrom<AppData> for MandelParameters {
     type Error = ();
     fn try_from(val: AppData) -> Result<Self, Self::Error> {
         if let FractalSettings::Mandel(settings) = val.settings {
+            Ok(settings.clone())
+        } else {
+            Err(())
+        }
+    }
+}
+impl TryFrom<AppData> for JuliaParameters {
+    type Error = ();
+    fn try_from(val: AppData) -> Result<Self, Self::Error> {
+        if let FractalSettings::Julia(settings) = val.settings {
             Ok(settings.clone())
         } else {
             Err(())

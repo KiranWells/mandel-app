@@ -1,9 +1,9 @@
 #![feature(portable_simd)]
 #![feature(try_blocks)]
 #![feature(decl_macro)]
+#![feature(assert_matches)]
 
 mod backends;
-mod image_generator;
 mod interface;
 mod types;
 

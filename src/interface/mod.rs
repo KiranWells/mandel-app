@@ -12,8 +12,7 @@ mod renderview;
 mod view_controllers;
 
 use crate::{
-    backends::{JuliaParameters, MandelParameters},
-    image_generator::ImageGenerator,
+    backends::{ImageGenerator, JuliaParameters, MandelParameters},
     AppData, FractalSettings,
 };
 

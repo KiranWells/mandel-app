@@ -1,8 +1,7 @@
 use druid::{widget::prelude::*, Data, Point, Widget, WidgetPod};
 
 use crate::{
-    backends::{JuliaParameters, MandelParameters},
-    image_generator::GeneratorParameters,
+    backends::{GeneratorParameters, JuliaParameters, MandelParameters},
     AppData, FractalSettings,
 };
 
@@ -81,13 +80,11 @@ impl Widget<AppData> for ViewDragController<MandelParameters> {
         if data.preview_downscaling != old_data.preview_downscaling {
             self.child.widget_mut().scaling = if data.preview_downscaling { 0.6 } else { 1.0 };
             self.child.widget_mut().should_resize = true;
-            ctx.request_layout();
         }
         if data.output_height != old_data.output_height
             || data.output_width != old_data.output_width
         {
             self.child.widget_mut().should_resize = true;
-            ctx.request_layout();
         }
         let _ = data
             .clone()

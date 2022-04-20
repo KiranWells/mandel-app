@@ -2,7 +2,7 @@ use std::{
     cell::UnsafeCell,
     ptr,
     sync::{
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, Ordering},
         Arc,
     },
 };
@@ -34,6 +34,7 @@ pub struct ImageGenerator {
     width: usize,
     height: usize,
     progress: Arc<AtomicI32>,
+    canceled: Arc<AtomicBool>,
 }
 
 impl ImageGenerator {
@@ -43,13 +44,15 @@ impl ImageGenerator {
             pixels: Arc::new(vec![0; width * height * BYTES_PER_PIXEL]),
             width,
             height,
-            progress: Arc::new(AtomicI32::new(0)),
+            progress: Arc::new(AtomicI32::new(1000)),
+            canceled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// handles the dispatch of all threads
     pub fn do_compute<D: GeneratorParameters>(&mut self, settings: D, threads: usize) {
         self.progress.store(0, Ordering::Relaxed);
+        self.canceled.store(false, Ordering::Release);
 
         (0..threads)
             .into_iter()
@@ -68,9 +71,14 @@ impl ImageGenerator {
             .collect::<Vec<_>>()
             .into_iter()
             .for_each(|t| t.join().unwrap());
-        self.progress.store(1000, Ordering::SeqCst);
+        self.progress.store(1000, Ordering::Release);
     }
 
+    pub fn cancel_compute(&mut self) {
+        self.canceled.store(true, Ordering::Release);
+    }
+
+    // getters
     pub fn width(&self) -> usize {
         self.width
     }
@@ -109,6 +117,9 @@ impl ImageGenerator {
                 let intermediate = settings.calc_pixel_row(self.width, self.height, (i, j));
                 let pixel = settings.shade_pixel_row(intermediate);
                 self.write_pixel(i + j * self.width, pixel);
+            }
+            if self.canceled.load(Ordering::Acquire) {
+                return;
             }
         }
     }

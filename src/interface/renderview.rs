@@ -1,4 +1,4 @@
-use std::thread::JoinHandle;
+use std::assert_matches::debug_assert_matches;
 
 use druid::{
     piet::{ImageFormat, InterpolationMode},
@@ -6,51 +6,62 @@ use druid::{
     Rect,
 };
 
-use crate::image_generator::{GeneratorParameters, ImageGenerator};
+use crate::backends::{GeneratorParameters, ImageGenerator};
+
+#[derive(Debug)]
+enum RenderState {
+    NotStarted,
+    InProgress(f64),
+    Canceled,
+    Finished,
+}
 
 pub struct RenderView {
     image: ImageGenerator,
-    handle: Option<JoinHandle<()>>,
-    old_progress: Option<f64>,
+    state: RenderState,
     pub scaling: f64,
     pub should_render: bool,
     pub should_resize: bool,
 }
 
+use RenderState::*;
+
 impl RenderView {
     pub fn new(width: usize, height: usize) -> Self {
         RenderView {
             image: ImageGenerator::new(width, height),
-            handle: None,
-            old_progress: None,
+            state: NotStarted,
             should_render: true,
             should_resize: false,
             scaling: 0.5,
         }
     }
 
+    fn finish(&mut self) {
+        self.image.cancel_compute();
+        self.state = Canceled;
+    }
+
+    /// Precondition: Requires self state to not be InProgress or Canceled
     fn render_new<GP: GeneratorParameters>(&mut self, settings: &GP) {
-        if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-            handle.join().unwrap();
-        }
-        self.old_progress = Some(0.0);
-        let sent = settings.clone();
+        debug_assert_matches!(self.state, NotStarted | Finished);
+        let sent_settings = settings.clone();
         let mut sent_image = self.image.clone();
-        self.handle = Some(std::thread::spawn(move || sent_image.do_compute(sent, 8)));
+        let _ = std::thread::spawn(move || sent_image.do_compute(sent_settings, 8));
+
+        self.state = InProgress(0.0);
         self.should_render = false;
     }
 
+    /// Precondition: Requires self state to not be InProgress or Canceled
     fn resize(&mut self, new_size: &Size) {
-        if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-            handle.join().unwrap();
-            self.old_progress = None;
-        }
+        debug_assert_matches!(self.state, NotStarted | Finished);
         let &Size { width, height } = new_size;
-        println! {"Size: {:?}", new_size};
         self.image = ImageGenerator::new(
             (width * self.scaling) as usize,
             (height * self.scaling) as usize,
         );
+
         self.should_resize = false;
         self.should_render = true;
     }
@@ -62,23 +73,39 @@ where
 {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut GP, _env: &Env) {
         match event {
-            Event::AnimFrame(x) => {
-                if self.old_progress == Some(100.0) {
-                    if let Some(handle) = std::mem::replace(&mut self.handle, None) {
-                        handle.join().unwrap();
+            Event::AnimFrame(_) => {
+                match self.state {
+                    NotStarted | Finished => {
+                        if self.should_resize {
+                            self.resize(&ctx.size());
+                        }
+                        if self.should_render {
+                            self.render_new(data);
+                        }
                     }
-                    self.old_progress = None;
-                }
-                if self.should_render && self.old_progress == None {
-                    self.render_new::<GP>(&data.clone().into());
-                }
-                if x % 2 == 0 {
-                    let progress = self.image.get_progress();
-                    if Some(progress) != self.old_progress {
-                        self.old_progress = Some(progress);
-                        ctx.request_paint()
+                    InProgress(old_progress) => {
+                        if self.should_render || self.should_resize {
+                            self.finish();
+                        } else {
+                            let progress = self.image.get_progress();
+                            if progress == 100.0 {
+                                self.state = Finished;
+                                ctx.request_paint();
+                            } else if old_progress != progress {
+                                self.state = InProgress(progress);
+                                ctx.request_paint();
+                            }
+                        }
+                    }
+                    Canceled => {
+                        let progress = self.image.get_progress();
+                        if progress == 100.0 {
+                            self.state = Finished;
+                            ctx.request_paint();
+                        }
                     }
                 }
+
                 ctx.request_anim_frame();
             }
             _ => {}
@@ -90,7 +117,7 @@ where
             LifeCycle::WidgetAdded => {
                 ctx.request_anim_frame();
             }
-            LifeCycle::Size(new_size) => self.resize(new_size),
+            LifeCycle::Size(_) => self.should_resize = true,
             _ => {}
         }
     }
@@ -108,9 +135,6 @@ where
             max_size.width.min(window_size.width),
             max_size.height.min(window_size.height),
         );
-        if self.should_resize {
-            self.resize(&new_size);
-        }
         new_size
     }
 
@@ -127,7 +151,7 @@ where
         ctx.draw_image(
             &drawable_image,
             Rect::from_origin_size((0.0, 0.0), size),
-            InterpolationMode::Bilinear,
+            InterpolationMode::NearestNeighbor,
         );
     }
 }

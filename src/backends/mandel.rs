@@ -3,9 +3,8 @@ use std::simd::{f64x4, Simd, StdFloat};
 
 use druid::{Data, Lens};
 
-use crate::image_generator::{GeneratorParameters, Pixel, BYTES_PER_PIXEL, LANES};
-
-use super::hsl2rgb;
+use super::image_generator::{GeneratorParameters, Pixel, BYTES_PER_PIXEL, LANES};
+use super::utilities::hsl2rgb;
 
 #[derive(Clone, PartialEq, Data, Lens)]
 pub struct MandelParameters {

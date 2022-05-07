@@ -4,18 +4,19 @@ use druid::{
         Axis, Button, Checkbox, Flex, Label, LineBreaking, MainAxisAlignment, RadioGroup, Scroll,
         Slider, Tabs, TabsTransition, TextBox, ValueTextBox, ViewSwitcher,
     },
-    Color, Data, Env, EventCtx, FontDescriptor, FontFamily, FontWeight, Lens, TextAlignment,
-    Widget, WidgetExt,
+    Color, Env, EventCtx, FontDescriptor, FontFamily, FontWeight, TextAlignment, Widget, WidgetExt,
 };
-
-mod renderview;
-mod view_controllers;
 
 use crate::{
     backends::{ImageGenerator, JuliaParameters, MandelParameters},
     AppData, FractalSettings,
 };
 
+mod lenses;
+mod renderview;
+mod view_controllers;
+
+use lenses::*;
 pub use renderview::RenderView;
 use view_controllers::ViewDragController;
 
@@ -40,7 +41,11 @@ macro parameters_to_interface {
                 Slider::new()
                     .with_range($min, $max)
                     .expand_width()
-                    .padding((0.0, 5.0)),
+                    .padding((0.0, 5.0))
+                    .env_scope(|env: &mut Env, _data: &_| {
+                        env.set(druid::theme::BASIC_WIDGET_HEIGHT, 13.0);
+                        env.set(druid::theme::BACKGROUND_DARK, Color::from_rgba32_u32(0x212733FF));
+                    }),
             )
             .expand_width()
             .lens(<$struct>::$member)
@@ -62,8 +67,9 @@ macro parameters_to_interface {
     },
     (_inner; $struct:ty, ($member:ident: [ x ] $name:literal)) => {
         Flex::column()
-            .with_child(Checkbox::new($name).lens(<$struct>::$member))
-            .padding((0.0, 10.0, 0.0, 0.0))
+            .with_child(Checkbox::new($name)
+                .lens(<$struct>::$member))
+                .padding((0.0, 10.0, 0.0, 0.0))
     },
     (_inner_label; $name:literal) => {
         Label::new($name)
@@ -77,47 +83,22 @@ macro parameters_to_interface {
     },
 }
 
-struct AppDataToMandel {}
-
-impl Lens<AppData, MandelParameters> for AppDataToMandel {
-    fn with<V, F: FnOnce(&MandelParameters) -> V>(&self, data: &AppData, f: F) -> V {
-        if let FractalSettings::Mandel(settings) = &data.settings {
-            f(settings)
-        } else {
-            panic! {};
-        }
-    }
-
-    fn with_mut<V, F: FnOnce(&mut MandelParameters) -> V>(&self, data: &mut AppData, f: F) -> V {
-        if let FractalSettings::Mandel(settings) = &mut data.settings {
-            f(settings)
-        } else {
-            panic! {};
-        }
-    }
-}
-struct AppDataToJulia {}
-impl Lens<AppData, JuliaParameters> for AppDataToJulia {
-    fn with<V, F: FnOnce(&JuliaParameters) -> V>(&self, data: &AppData, f: F) -> V {
-        if let FractalSettings::Julia(settings) = &data.settings {
-            f(settings)
-        } else {
-            panic! {};
-        }
-    }
-
-    fn with_mut<V, F: FnOnce(&mut JuliaParameters) -> V>(&self, data: &mut AppData, f: F) -> V {
-        if let FractalSettings::Julia(settings) = &mut data.settings {
-            f(settings)
-        } else {
-            panic! {};
-        }
-    }
+#[derive(Clone, Copy)]
+enum AppView {
+    Generation,
+    Coloring,
+    Rendering,
 }
 
 pub fn build_ui() -> impl Widget<AppData> {
     Flex::row()
-        .with_flex_child(select_view_controller(), 0.75)
+        .with_flex_child(
+            fractal_switcher(|fractal_settings| match fractal_settings {
+                FractalType::Mandel => Box::new(ViewDragController::<MandelParameters>::new()),
+                FractalType::Julia => Box::new(ViewDragController::<JuliaParameters>::new()),
+            }),
+            0.75,
+        )
         .with_flex_child(
             Flex::column()
                 .with_child(
@@ -140,38 +121,6 @@ pub fn build_ui() -> impl Widget<AppData> {
                 )),
             0.25,
         )
-}
-
-fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
-    let mut render_image = ImageGenerator::new(data.output_width, data.output_height);
-    let passable = data.clone();
-    data.log_text = String::from("Render Started (done soon)");
-    let _ = std::thread::spawn(move || {
-        let filename = passable.filename.clone();
-        match passable.settings {
-            FractalSettings::Mandel(settings) => {
-                render_image.do_compute::<MandelParameters>(settings, num_cpus::get())
-            }
-            FractalSettings::Julia(settings) => {
-                render_image.do_compute::<JuliaParameters>(settings, num_cpus::get())
-            }
-        }
-        image::save_buffer(
-            filename.as_str(),
-            render_image.image_data(),
-            render_image.width() as u32,
-            render_image.height() as u32,
-            image::ColorType::Rgb8,
-        )
-        .unwrap()
-    });
-}
-
-#[derive(Clone, Copy)]
-enum AppView {
-    Generation,
-    Coloring,
-    Rendering,
 }
 
 fn select_view(view: AppView) -> impl Widget<AppData> {
@@ -216,49 +165,6 @@ fn create_rendering_tab() -> impl Widget<AppData> {
         .main_axis_alignment(MainAxisAlignment::Start)
 }
 
-struct RadioLens {}
-
-impl Lens<AppData, FractalType> for RadioLens {
-    fn with<V, F: FnOnce(&FractalType) -> V>(&self, data: &AppData, f: F) -> V {
-        match &data.settings {
-            FractalSettings::Mandel(_) => f(&FractalType::Mandel),
-            FractalSettings::Julia(_) => f(&FractalType::Julia),
-        }
-    }
-
-    fn with_mut<V, F: FnOnce(&mut FractalType) -> V>(&self, data: &mut AppData, f: F) -> V {
-        match &data.settings {
-            FractalSettings::Mandel(mandel_settings) => {
-                let mut frac = FractalType::Mandel;
-                let out = f(&mut frac);
-                if frac != FractalType::Mandel {
-                    let mut new_julia = JuliaParameters::default();
-                    new_julia.constant_real = mandel_settings.offset_x;
-                    new_julia.constant_imag = mandel_settings.offset_y;
-                    new_julia.zoom = mandel_settings.zoom / 2.0;
-                    new_julia.max_iter = (f64::powf(2.0, new_julia.zoom / 10.0) * 1000.0) as usize;
-                    data.settings = FractalSettings::Julia(new_julia);
-                }
-                out
-            }
-            FractalSettings::Julia(julia_settings) => {
-                let mut frac = FractalType::Julia;
-                let out = f(&mut frac);
-                if frac != FractalType::Julia {
-                    let mut new_mandel = MandelParameters::default();
-                    new_mandel.offset_x = julia_settings.constant_real;
-                    new_mandel.offset_y = julia_settings.constant_imag;
-                    new_mandel.zoom = julia_settings.zoom * 2.0;
-                    new_mandel.max_iter =
-                        (f64::powf(2.0, new_mandel.zoom / 10.0) * 1000.0) as usize;
-                    data.settings = FractalSettings::Mandel(new_mandel);
-                }
-                out
-            }
-        }
-    }
-}
-
 fn create_generation_tab() -> impl Widget<AppData> {
     Flex::column()
         .with_child(
@@ -278,6 +184,12 @@ fn create_generation_tab() -> impl Widget<AppData> {
                         ("Mandelbrot set", FractalType::Mandel),
                         ("Julia set", FractalType::Julia),
                     ])
+                    .env_scope(|env: &mut Env, _data: &_| {
+                        env.set(
+                            druid::theme::BACKGROUND_DARK,
+                            Color::from_rgba32_u32(0x212733FF),
+                        );
+                    })
                     .lens(RadioLens {}),
                 )
                 .with_child(fractal_switcher(
@@ -369,19 +281,6 @@ fn create_coloring_tab() -> impl Widget<AppData> {
         .main_axis_alignment(MainAxisAlignment::Start)
 }
 
-fn select_view_controller() -> impl Widget<AppData> {
-    fractal_switcher(|fractal_settings| match fractal_settings {
-        FractalType::Mandel => Box::new(ViewDragController::<MandelParameters>::new()),
-        FractalType::Julia => Box::new(ViewDragController::<JuliaParameters>::new()),
-    })
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Data)]
-enum FractalType {
-    Mandel,
-    Julia,
-}
-
 fn fractal_switcher(
     switcher: impl Fn(&FractalType) -> Box<dyn Widget<AppData>> + 'static,
 ) -> impl Widget<AppData> {
@@ -392,4 +291,29 @@ fn fractal_switcher(
         },
         move |fractal_settings, _data, _env| switcher(fractal_settings),
     )
+}
+
+fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
+    let mut render_image = ImageGenerator::new(data.output_width, data.output_height);
+    let passable = data.clone();
+    data.log_text = String::from("Render Started (done soon)");
+    let _ = std::thread::spawn(move || {
+        let filename = passable.filename.clone();
+        match passable.settings {
+            FractalSettings::Mandel(settings) => {
+                render_image.do_compute::<MandelParameters>(settings, num_cpus::get())
+            }
+            FractalSettings::Julia(settings) => {
+                render_image.do_compute::<JuliaParameters>(settings, num_cpus::get())
+            }
+        }
+        image::save_buffer(
+            filename.as_str(),
+            render_image.image_data(),
+            render_image.width() as u32,
+            render_image.height() as u32,
+            image::ColorType::Rgb8,
+        )
+        .unwrap()
+    });
 }

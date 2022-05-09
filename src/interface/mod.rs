@@ -1,8 +1,8 @@
 use druid::{
     text::format::ParseFormatter,
     widget::{
-        Axis, Button, Checkbox, Flex, Label, LineBreaking, MainAxisAlignment, RadioGroup, Scroll,
-        Slider, Tabs, TabsTransition, TextBox, ValueTextBox, ViewSwitcher,
+        Axis, Button, Flex, Label, LineBreaking, MainAxisAlignment, RadioGroup, Scroll, Slider,
+        Tabs, TabsTransition, TextBox, ValueTextBox, ViewSwitcher,
     },
     Color, Env, EventCtx, FontDescriptor, FontFamily, FontWeight, TextAlignment, Widget, WidgetExt,
 };
@@ -221,13 +221,7 @@ fn create_generation_tab() -> impl Widget<AppData> {
                             .lens(AppDataToJulia {}),
                         ),
                     },
-                ))
-                .with_child(parameters_to_interface! {
-                    AppData
-                    [
-                        (preview_downscaling: [ x ] "Half-scale preview")
-                    ]
-                }),
+                )),
         )
         .main_axis_alignment(MainAxisAlignment::Start)
 }
@@ -307,13 +301,16 @@ fn render_full(_ctx: &mut EventCtx, data: &mut AppData, _env: &Env) {
                 render_image.do_compute::<JuliaParameters>(settings, num_cpus::get())
             }
         }
-        image::save_buffer(
-            filename.as_str(),
-            render_image.image_data(),
-            render_image.width() as u32,
-            render_image.height() as u32,
-            image::ColorType::Rgb8,
-        )
-        .unwrap()
+        let image_ref = render_image.image_ref().lock();
+        if let Ok(image) = image_ref {
+            image::save_buffer(
+                filename.as_str(),
+                image.data.as_ref(),
+                image.width as u32,
+                image.height as u32,
+                image::ColorType::Rgb8,
+            )
+            .unwrap()
+        }
     });
 }

@@ -22,8 +22,6 @@ fn main() -> Result<(), PlatformError> {
         output_height: 2160,
         filename: String::from("fractal.png"),
         log_text: String::new(),
-        rendering_image: None,
-        preview_downscaling: true,
     };
     AppLauncher::with_window(main_window)
         .configure_env(configure)

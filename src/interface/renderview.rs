@@ -8,7 +8,7 @@ use druid::{
 
 use crate::backends::{GeneratorParameters, ImageGenerator};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum RenderState {
     NotStarted,
     InProgress(f64),
@@ -19,7 +19,6 @@ enum RenderState {
 pub struct RenderView {
     image: ImageGenerator,
     state: RenderState,
-    pub scaling: f64,
     pub should_render: bool,
     pub should_resize: bool,
 }
@@ -33,7 +32,6 @@ impl RenderView {
             state: NotStarted,
             should_render: true,
             should_resize: false,
-            scaling: 0.5,
         }
     }
 
@@ -57,10 +55,7 @@ impl RenderView {
     fn resize(&mut self, new_size: &Size) {
         debug_assert_matches!(self.state, NotStarted | Finished);
         let &Size { width, height } = new_size;
-        self.image = ImageGenerator::new(
-            (width * self.scaling) as usize,
-            (height * self.scaling) as usize,
-        );
+        self.image = ImageGenerator::new(width as usize, height as usize);
 
         self.should_resize = false;
         self.should_render = true;
@@ -139,19 +134,25 @@ where
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, _data: &GP, _env: &Env) {
-        let drawable_image = ctx
-            .make_image(
-                self.image.width(),
-                self.image.height(),
-                self.image.image_data(),
-                ImageFormat::Rgb,
-            )
-            .unwrap();
-        let size = ctx.size();
-        ctx.draw_image(
-            &drawable_image,
-            Rect::from_origin_size((0.0, 0.0), size),
-            InterpolationMode::NearestNeighbor,
-        );
+        let image_ref = self.image.image_ref().lock();
+        if let Ok(image) = image_ref {
+            if image.width == 0 || image.height == 0 {
+                return;
+            }
+            let drawable_image = ctx
+                .make_image(
+                    image.width,
+                    image.height,
+                    image.data.as_ref(),
+                    ImageFormat::Rgb,
+                )
+                .unwrap();
+            let size = ctx.size();
+            ctx.draw_image(
+                &drawable_image,
+                Rect::from_origin_size((0.0, 0.0), size),
+                InterpolationMode::NearestNeighbor,
+            );
+        }
     }
 }

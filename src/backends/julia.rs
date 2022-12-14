@@ -1,5 +1,5 @@
 use std::f64::consts::PI;
-use std::simd::{f64x4, Simd, StdFloat};
+use std::simd::{f64x4, Simd, SimdFloat, SimdPartialOrd, StdFloat};
 
 use druid::{Data, Lens};
 
@@ -25,9 +25,6 @@ pub struct JuliaParameters {
     pub internal_brightness: f64,
 }
 
-const MM_ONES: f64x4 = Simd::splat(1.0);
-const MM_ZERO: f64x4 = Simd::splat(0.0);
-
 impl GeneratorParameters for JuliaParameters {
     type Intermediate = [f64; 4];
     /// calculates the color for LANES number of pixels from `[i,j]` to `[i,j+LANES]` of the image
@@ -37,6 +34,8 @@ impl GeneratorParameters for JuliaParameters {
         height: usize,
         (i, j): (usize, usize),
     ) -> [Self::Intermediate; LANES] {
+        let mm_ones: f64x4 = Simd::splat(1.0);
+        let mm_zero: f64x4 = Simd::splat(0.0);
         // initialize values
         let scale = f64::powf(2.0, -self.zoom);
 
@@ -58,16 +57,16 @@ impl GeneratorParameters for JuliaParameters {
         );
 
         // z': complex running derivative
-        let mut z_prime_r = MM_ONES;
-        let mut z_prime_i = MM_ONES;
+        let mut z_prime_r = mm_ones;
+        let mut z_prime_i = mm_ones;
 
         // z^2: temporary value for optimized computation
         let mut real_2 = z_real * z_real;
         let mut imag_2 = z_imag * z_imag;
 
         // value accumulators for coloring
-        let mut step_acc = MM_ZERO;
-        let mut orbit_acc = MM_ONES;
+        let mut step_acc = mm_zero;
+        let mut orbit_acc = mm_ones;
 
         for _step in 0..self.max_iter {
             // iterate values, according to z = z^2 + c
@@ -96,7 +95,7 @@ impl GeneratorParameters for JuliaParameters {
 
             // select lanes which have not escaped
             // escape of 1000.0 used to smooth distance estimate
-            let mask = radius_2.lanes_lt(Simd::splat(1000.0));
+            let mask = radius_2.simd_lt(Simd::splat(1000.0));
 
             // conditionally iterate, only if the pixel has not escaped
             z_real = mask.select(z_real_tmp, z_real);
@@ -107,8 +106,8 @@ impl GeneratorParameters for JuliaParameters {
             real_2 = z_real * z_real;
             imag_2 = z_imag * z_imag;
 
-            step_acc = mask.select(MM_ONES, MM_ZERO) + step_acc;
-            orbit_acc = orbit_acc.min(real_2 + imag_2);
+            step_acc = mask.select(mm_ones, mm_zero) + step_acc;
+            orbit_acc = orbit_acc.simd_min(real_2 + imag_2);
 
             // finish if all pixels have escaped
             if !mask.any() {

@@ -45,7 +45,7 @@ impl RenderView {
         debug_assert_matches!(self.state, NotStarted | Finished);
         let sent_settings = settings.clone();
         let mut sent_image = self.image.clone();
-        let _ = std::thread::spawn(move || sent_image.do_compute(sent_settings, 8));
+        let _ = std::thread::spawn(move || sent_image.do_compute(sent_settings, num_cpus::get()));
 
         self.state = InProgress(0.0);
         self.should_render = false;
